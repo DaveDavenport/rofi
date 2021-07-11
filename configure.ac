@@ -2,7 +2,6 @@ AC_INIT([rofi], [1.6.1-dev], [https://github.com/davatorium/rofi/],[],[https://r
 
 AC_CONFIG_SRCDIR([source/rofi.c])
 AC_CONFIG_HEADER([config.h])
-AH_BOTTOM([#include "gitconfig.h"])
 
 dnl ---------------------------------------------------------------------
 dnl Lex & Bison language parser.
