@@ -1,0 +1,253 @@
+# rofi(1) completion                                        -*- shell-script -*-
+
+# Prints all registered modi (by parsing the help text)
+_rofi_list_modi()
+{
+    rofi -help | awk '/Detected modi/ {do_print=1}
+        NF==0 {do_print=0}
+        do_print==1 {print}' | tail -n +2 | sed 's/+//g' | awk '{print $2}'
+}
+
+
+_rofi_get_window_code_list()
+{
+    # if no wmctrl, give up
+    command -v wmctrl > /dev/null 2>&1 || return
+
+    wmctrl -l | awk '{print $1}'
+}
+
+
+_rofi_get_xdisplays()
+{
+    # if no w, give up
+    command -v w > /dev/null 2>&1 || return
+
+    w -ush | awk '{print $5}'
+}
+
+
+# Get the available xrandr monitors
+_rofi_get_monitors()
+{
+    # if no xrandr, give up
+    command -v xrandr > /dev/null 2>&1 || return
+
+    xrandr --listmonitors | awk 'NR<2 {next} {gsub(/:/, "")} {print $1}'
+}
+
+
+# Get valid formats for the -format command
+_rofi_get_formats()
+{
+    echo "s i d q p f F" | tr ' ' "\n"
+}
+
+
+# Parse out flags that look like keys and mouse options from the help text
+_rofi_get_keys()
+{
+    rofi -help | grep -E "[-](kb|me|ml)-" | awk '{print $1}'
+}
+
+
+# Get a list of all installed font families
+_rofi_get_all_fonts()
+{
+    # if no fc-list, give up
+    command -v fc-list > /dev/null 2>&1 || return
+
+    # list of installed font families
+    fc-list --format="%{family[0]}\n"
+}
+
+
+_rofi_complete_fonts()
+{
+    # don't split on spaces in a font name
+    local IFS=$'\n'
+    local fonts=($(_rofi_get_all_fonts))
+
+    # the word in progress, if any
+    local cur=$1
+
+    # strip trailing numeric suffix, if any (e.g. Font 12 -> Font)
+    local root=$(echo $cur | sed 's/\\ / /g' | sed -E 's/ +[0-9]+$//')
+
+    # if that is a font name, suggest that font plus a selection of likely sizes
+    [[ " ${fonts[@]} " == *" ${root} "* ]] && fonts+=("$root "{8..14})
+
+    # Return the entire font list, plus the sizes for a complete font name
+    printf "%s\n" "${fonts[@]}"
+}
+
+
+_rofi_construct_bindings()
+{
+    local mods=(Control+ Control+Shift+ Control+Shift+Alt+ Control+Alt+
+                Shift+ Shift+Alt+ Alt+)
+    local cur=$1
+
+    # Add bare modifiers as completion candidates
+    printf "%s\n" "${mods[@]}"
+
+    # find the "root" of the current word-in-progress and add all the keys to that
+    # as completion candidates.
+    # This avoids spamming the user with N_mods * N_keys
+    local root=$(echo $cur | grep -o ".*+")
+
+    printf "${root}%s\n" "${keys[@]}"
+}
+
+
+# Get a list of bindings compatible with the given prefix ($1)
+_rofi_get_key_bindings()
+{
+    # GTK keynames
+    local IFS=$'\n'
+    local keys=($(xmodmap -pk | awk 'NF>2 {gsub(/[()]/,""); print $3} '))
+
+    _rofi_construct_bindings "$1" $keys
+}
+
+_rofi_get_mouse_bindings()
+{
+    # GTK keynames
+    local keys=(MousePrimary MouseDPrimary MouseSecondary MouseDSecondary
+                ScrollUp ScrollLeft ScrollRight ScrollDown
+                Back Forward)
+    _rofi_construct_bindings "$1" $keys
+
+}
+
+
+# Main completion function
+_rofi_completions()
+{
+    local cur prev words cword
+    _init_completion || return
+
+    # These are flags that are always valid
+    local gen_flags='-no-config -version -dmenu -display -help -e
+                 -dump-config -dump-theme -dump-xresources
+                 -markup -normal-window -show -modi -combi-modi -eh
+                 -no-lazy-grab -no-plugins -plugin-path
+                 -width -lines -columns -font -bw -location -padding
+                 -yoffset -xoffset
+                 -fixed-num-lines -no-fixed-num-lines
+                 -show-icons -no-show-icons
+                 -terminal -ssh-client -run-command -run-shell-command
+                 -window-command -window-match-fields
+                 -icon-theme -drun-match-fields
+                 -drun-show-actions -no-drun-show-actions
+                 -drun-display-format
+                 -disable-history -no-disable-history -ignored-prefixes
+                 -sort -no-sort -sorting-method -case-sensitive -no-case-sensitive
+                 -cycle -no-cycle -sidebar-mode -no-sidebar-mode
+                 -auto-select -no-auto-select -parse-hosts -no-parse-hosts
+                 -parse-known-hosts -no-parse-known-hosts
+                 -matching -tokenize -no-tokenize -m
+                 -filter -fullscreen -no-fullscreen -dpi
+                 -threads -scroll-method -window-format
+                 -click-to-exit -no-click-to-exit -show-match -no-show-match
+                 -theme -color-normal -color-urgent -color-active -color-window
+                 -max-history-size -combi-hide-mode-prefix -no-combi-hide-mode-prefix
+                 -matching-negate-char -cache-dir -pid '
+
+    local dmenu_flags='-mesg -p -selected_row -format -u -a -l -i
+            -only-match -no-custom -select -password -markup-rows
+            -sep -input -sync -async-pre-read -w'
+
+    # installed modi
+    local modis=$(_rofi_list_modi)
+
+    # every modi gets a -display-<modi> option
+    gen_flags+=$(printf "%s\n" ${modis} | sed -e 's/^/-display-/')
+
+    # append the supported key/mouse opts
+    gen_flags+=$(_rofi_get_keys)
+
+    case $cur in
+        -*|'')
+            # these flags always apply
+            COMPREPLY=($(compgen -W '${gen_flags[*]}' -- "$cur"))
+            [[ $COMPREPLY == *= ]] && compopt -o nospace
+            ;;
+    esac
+
+    local have_dmenu=0
+
+    # Check for modal trigger arguments
+    local word
+    for word in ${words[@]};
+    do
+        case ${word} in
+            -dmenu) have_dmenu=1 ;;
+        esac
+    done
+
+    case $prev in
+        -cache-dir|-plugin-path)
+            COMPREPLY=($(compgen -d -- "$cur"))
+            ;;
+        -input|-pid)
+            COMPREPLY=($(compgen -f -- "$cur"))
+            ;;
+        -show|-modi)
+            # This can be smarter by merging into a comma-separated list
+            # for -modi
+            COMPREPLY=($(compgen -W '${modis[*]}' -- "$cur"))
+            ;;
+        -w)
+            local windows=$(_rofi_get_window_code_list)
+            COMPREPLY=($(compgen -W '${windows[*]}' -- "$cur"))
+            ;;
+        -m)
+            local monitors=$(_rofi_get_monitors)
+            COMPREPLY=($(compgen -W '${monitors[*]}' -- "$cur"))
+            ;;
+        -display)
+            local displays=$(_rofi_get_xdisplays)
+            COMPREPLY=($(compgen -W '${displays[*]}' -- "$cur"))
+            ;;
+        -format)
+            local formats=$(_rofi_get_formats)
+            COMPREPLY=($(compgen -W '${formats[*]}' -- "$cur"))
+            ;;
+        -matching)
+            COMPREPLY=($(compgen -W 'normal regex glob fuzzy' -- "$cur"))
+            ;;
+        -sorting-method)
+            COMPREPLY=($(compgen -W 'levenshtein fzf normal' -- "$cur"))
+            ;;
+        -font)
+            # this isn't quite complete, as not having a number is invalid
+            local fonts=$(_rofi_complete_fonts "$cur")
+            local IFS=$'\n' # don't split on fonts with spaces
+            COMPREPLY=($(compgen -W '${fonts[*]}' -- "$cur"))
+            compopt -o nospace
+            ;;
+        -kb*)
+            local bindings=$(_rofi_get_key_bindings "$cur")
+            COMPREPLY=($(compgen -W '${bindings[*]}' -- "$cur"))
+            compopt -o nospace
+            ;;
+        -me*)
+            local bindings=$(_rofi_get_mouse_bindings "$cur")
+            COMPREPLY=($(compgen -W '${bindings[*]}' -- "$cur"))
+            compopt -o nospace
+            ;;
+        *)
+            [ ${have_dmenu} -eq 1 ] && COMPREPLY+=($(compgen -W '${dmenu_flags[*]}' -- "$cur"))
+    esac
+
+    # Handle completions with spaces
+    if [ ${#COMPREPLY[*]} -eq 0 ]; then
+        COMPREPLY=()
+    else
+        COMPREPLY=($(printf '%q\n' "${COMPREPLY[@]}"))
+    fi
+}
+
+
+complete -F _rofi_completions rofi
